@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HACİZ İHBAR ANALYZER v11.0 - ROBUST EDITION
+HACİZ İHBAR ANALYZER v11.1 - ROBUST EDITION
 ===========================================
 Banka cevaplarını analiz eder. "Ghost Bloke" ve "Missed Bloke" sorunlarını çözer.
 Strateji: Geniş Arama -> Negatif Eleme -> Skorlama
@@ -14,6 +14,15 @@ from datetime import datetime
 import re
 import os
 import zipfile
+import sys
+
+# pdfplumber importunu güvenli yap
+try:
+    import pdfplumber
+    PDFPLUMBER_OK = True
+except ImportError:
+    PDFPLUMBER_OK = False
+
 try:
     from icra_analiz_v2 import IcraUtils
 except ImportError:
@@ -81,7 +90,7 @@ class HacizIhbarAnalyzer:
                 if metin:
                     cevaplar.append(self.analyze_response(metin))
             except Exception as e:
-                print(f"Hata {yol}: {e}")
+                print(f"Hata {yol}: {e}", file=sys.stderr)
 
         toplam = sum(c.tutar for c in cevaplar if c.durum == CevapDurumu.BLOKE_VAR)
         return HacizIhbarAnalizSonucu(len(cevaplar), toplam, cevaplar)
@@ -145,18 +154,33 @@ class HacizIhbarAnalyzer:
             # UDF ise XML parse et
             if yol.endswith('.udf'):
                 with zipfile.ZipFile(yol) as z:
-                    if 'content.xml' in z.namelist():
-                        raw = z.read('content.xml').decode('utf-8', 'ignore')
-                        # Basit XML temizliği
-                        return re.sub(r'<[^>]+>', ' ', raw)
+                    # Check for content.xml or other xmls
+                    xml_files = [n for n in z.namelist() if n.endswith('.xml')]
+                    if 'content.xml' in xml_files:
+                        target = 'content.xml'
+                    elif xml_files:
+                        target = xml_files[0]
+                    else:
+                        return ""
+
+                    raw = z.read(target).decode('utf-8', 'ignore')
+                    # Basit XML temizliği
+                    return re.sub(r'<[^>]+>', ' ', raw)
             
-            # PDF ise pdfplumber (Import try/except içinde olmalı)
+            # PDF ise pdfplumber
             if yol.endswith('.pdf'):
-                import pdfplumber
+                if not PDFPLUMBER_OK:
+                    return "PDF okuyucu (pdfplumber) yüklü değil."
+
                 with pdfplumber.open(yol) as pdf:
                     return "\n".join([p.extract_text() or "" for p in pdf.pages])
             
-            # Text/XML
-            with open(yol, 'r', encoding='utf-8', errors='ignore') as f:
-                return f.read()
-        except: return ""
+            # Text/XML (Other)
+            if os.path.isfile(yol):
+                 with open(yol, 'r', encoding='utf-8', errors='ignore') as f:
+                    return f.read()
+
+            return ""
+        except Exception as e:
+            print(f"Dosya okuma hatası ({yol}): {e}", file=sys.stderr)
+            return ""
