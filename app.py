@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 """
 İCRA ANALİZ PRO v12.1 (Stateless Fix)
-=====================================
-Modüller arası geçişte dosya kaybını önleyen versiyon.
 """
 
 import streamlit as st

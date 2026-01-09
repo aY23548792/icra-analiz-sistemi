@@ -2,17 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 HACİZ İHBAR ANALYZER v11.1 - ROBUST EDITION
-===========================================
-Banka cevaplarını analiz eder. "Ghost Bloke" ve "Missed Bloke" sorunlarını çözer.
-Strateji: Geniş Arama -> Negatif Eleme -> Skorlama
 """
 
-from dataclasses import dataclass, field
-from typing import List, Tuple
-from enum import Enum
-from datetime import datetime
-import re
 import os
+import re
 import zipfile
 import sys
 
@@ -26,38 +19,60 @@ except ImportError:
 try:
     from icra_analiz_v2 import IcraUtils
 except ImportError:
-    class IcraUtils: # Fallback
+    # Fallback
+    class IcraUtils:
         @staticmethod
-        def clean_text(t): return t.lower()
+        def clean_text(t): return t.lower() if t else ""
         @staticmethod
         def tutar_parse(t): return 0.0
 
+# === ENUMS ===
+class IhbarTuru(Enum):
+    IHBAR_89_1 = "89/1 - Birinci İhbar"
+    IHBAR_89_2 = "89/2 - İkinci İhbar"
+    IHBAR_89_3 = "89/3 - Üçüncü İhbar"
+    BILINMIYOR = "Tespit Edilemedi"
+
 class MuhatapTuru(Enum):
     BANKA = "🏦 Banka"
-    TUZEL = "🏢 Şirket"
-    DIGER = "❓ Diğer"
+    TUZEL_KISI = "🏢 Tüzel Kişi"
+    GERCEK_KISI = "👤 Gerçek Kişi"
+    BILINMIYOR = "❓ Bilinmiyor"
 
 class CevapDurumu(Enum):
     BLOKE_VAR = "💰 BLOKE VAR"
-    MENFI = "❌ MENFİ (YOK)"
-    HESAP_VAR_BAKIYE_YOK = "⚠️ HESAP VAR BAKİYE YOK"
-    ITIRAZ = "⚖️ İTİRAZ"
-    BELIRSIZ = "❓ İNCELENMELİ"
-    KEP = "📧 KEP İLETİSİ"
+    HESAP_VAR_BAKIYE_YOK = "📋 Hesap Var - Bakiye Yok"
+    HESAP_YOK = "❌ Hesap Bulunamadı"
+    ALACAK_VAR = "💵 Alacak Var"
+    ALACAK_YOK = "❌ Alacak Yok"
+    ODEME_YAPILDI = "✅ Ödeme Yapıldı"
+    ITIRAZ = "⚖️ İtiraz Edildi"
+    PARSE_HATASI = "❓ Parse Edilemedi"
 
+# === DATA CLASSES ===
 @dataclass
 class HacizIhbarCevabi:
-    muhatap: str
-    durum: CevapDurumu
-    tutar: float
-    sonraki_adim: str
-    ham_metin: str
+    muhatap_adi: str
+    muhatap_turu: MuhatapTuru
+    ihbar_turu: IhbarTuru
+    cevap_durumu: CevapDurumu
+    bloke_tutari: float = 0.0
+    alacak_tutari: float = 0.0
+    aciklama: str = ""
+    kaynak_dosya: str = ""
+    sonraki_adim: str = ""
 
 @dataclass
 class HacizIhbarAnalizSonucu:
-    toplam_dosya: int = 0
+    toplam_muhatap: int = 0
+    banka_sayisi: int = 0
+    tuzel_kisi_sayisi: int = 0
+    gercek_kisi_sayisi: int = 0
     toplam_bloke: float = 0.0
+    toplam_alacak: float = 0.0
     cevaplar: List[HacizIhbarCevabi] = field(default_factory=list)
+    eksik_ihbarlar: List[dict] = field(default_factory=list)
+    ozet_rapor: str = ""
 
     @property
     def banka_sayisi(self):
@@ -73,27 +88,75 @@ class HacizIhbarAnalizSonucu:
         return "\n".join(lines)
 
 class HacizIhbarAnalyzer:
+    """
+    Context-Aware Banka Cevap Analizi
+    ---------------------------------
+    Strateji:
+    1. Önce NEGATİF durumları kontrol et (hesap yok, bakiye yok)
+    2. Sonra POZİTİF durumları ara (bloke var)
+    3. Context-aware: Sadece "bloke" kelimesine YAKIN tutarları al
+    """
     
-    BANKALAR = ["Ziraat", "Vakıf", "Halk", "Garanti", "Yapı Kredi", "İş Bankası", "Akbank", "QNB", "Deniz", "TEB", "Kuveyt", "Finans"]
+    # Banka isimleri (küçük harf pattern)
+    BANKALAR = {
+        'Ziraat Bankası': [r'ziraat', r't\.?c\.?\s*ziraat'],
+        'Halkbank': [r'halk\s*bank'],
+        'VakıfBank': [r'vakıf', r'vakif'],
+        'İş Bankası': [r'i[şs]\s*bank', r'türkiye\s*i[şs]'],
+        'Garanti BBVA': [r'garanti', r'bbva'],
+        'Yapı Kredi': [r'yap[ıi]\s*kredi'],
+        'Akbank': [r'akbank'],
+        'QNB Finansbank': [r'qnb', r'finansbank'],
+        'Denizbank': [r'deniz\s*bank'],
+        'TEB': [r'\bteb\b', r'türk\s*ekonomi'],
+        'ING Bank': [r'\bing\b'],
+        'HSBC': [r'hsbc'],
+        'Kuveyt Türk': [r'kuveyt'],
+        'Albaraka': [r'albaraka'],
+        'Şekerbank': [r'şeker', r'seker'],
+        'PTT': [r'\bptt\b'],
+    }
     
-    # Kesin Negatif İfadeler
-    MENFI_REGEX = [
-        r'hesap\s*bulunma',
-        r'kayıt\s*yok',
-        r'rastlanma',
-        r'menfi',
-        r'borçlu\s*adına\s*hesap\s*yok',
-        r'herhangi\s*bir\s*hak\s*ve\s*alacak\s*yok'
+    # Context-Aware Bloke Regex
+    # Sadece "bloke" kelimesinin YAKININDA olan tutarları yakalar
+    BLOKE_BEFORE = re.compile(
+        r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*(?:TL|₺)?.{0,40}?bloke',
+        re.IGNORECASE | re.DOTALL
+    )
+    BLOKE_AFTER = re.compile(
+        r'bloke.{0,40}?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*(?:TL|₺)?',
+        re.IGNORECASE | re.DOTALL
+    )
+    
+    # Alacak Regex (3. şahıslar için)
+    ALACAK_REGEX = re.compile(
+        r'(?:alacak|hak|hakediş).{0,40}?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*(?:TL|₺)?',
+        re.IGNORECASE | re.DOTALL
+    )
+    
+    # Negatif durumlar
+    HESAP_YOK_PATTERNS = [
+        r'hesab[ıi]\s*(?:bulun|mevcut|yok)',
+        r'kayıt(?:lı)?\s*(?:hesab)?\s*(?:bulun|yok)',
+        r'müşteri\s*kayd[ıi]\s*(?:bulun|yok)',
+        r'herhangi\s*bir\s*hesap\s*(?:bulun|yok)',
+        r'herhangi\s*bir\s*hesap[ıi]?\s*(?:bulun|yok)',
+        r'adına\s*hesap\s*(?:bulun|yok)',
+        r'adına\s*herhangi\s*bir\s*hesap',
+        r'hesap\s*bulunmam',
+        r'hesap\s*yoktur',
+        r'hesap\s*mevcut\s*değil',
     ]
     
-    # Bakiye Yok İfadeleri
-    BAKIYE_YOK_REGEX = [
-        r'bakiye\s*yok',
-        r'bakiye\s*bulunma',
-        r'yetersiz',
-        r'blokeli\s*tutar\s*:\s*0',
-        r'bakiye\s*:\s*0[,.]00'
+    BAKIYE_YOK_PATTERNS = [
+        r'bakiye(?:si)?\s*(?:bulun|yok|yetersiz)',
+        r'bakiye\s*:?\s*0[,.]?00',
+        r'müsait\s*bakiye\s*(?:bulun|yok)',
+        r'bloke\s*edilebilir\s*(?:tutar|bakiye)?\s*(?:bulun|yok)',
     ]
+
+    def __init__(self):
+        self.temp_dirs = []
 
     def batch_analiz(self, dosya_yollari: List[str]) -> HacizIhbarAnalizSonucu:
         cevaplar = []
