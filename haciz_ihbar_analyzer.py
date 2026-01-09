@@ -59,6 +59,19 @@ class HacizIhbarAnalizSonucu:
     toplam_bloke: float = 0.0
     cevaplar: List[HacizIhbarCevabi] = field(default_factory=list)
 
+    @property
+    def banka_sayisi(self):
+        """Benzersiz banka sayısı"""
+        return len(set(c.muhatap for c in self.cevaplar))
+
+    @property
+    def ozet_rapor(self):
+        """Basit rapor çıktısı"""
+        lines = [f"Toplam Dosya: {self.toplam_dosya}", f"Toplam Bloke: {self.toplam_bloke:,.2f} TL", "-"*20]
+        for c in self.cevaplar:
+            lines.append(f"{c.muhatap}: {c.durum.value} - {c.tutar:,.2f} TL ({c.sonraki_adim})")
+        return "\n".join(lines)
+
 class HacizIhbarAnalyzer:
     
     BANKALAR = ["Ziraat", "Vakıf", "Halk", "Garanti", "Yapı Kredi", "İş Bankası", "Akbank", "QNB", "Deniz", "TEB", "Kuveyt", "Finans"]
