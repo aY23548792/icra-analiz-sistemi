@@ -132,7 +132,7 @@ class DosyaAnalizSonucu:
 # === UTILITIES ===
 class IcraUtils:
     """Merkezi yardımcı fonksiyonlar"""
-    
+
     TR_LOWER_MAP = {
         ord('İ'): 'i', ord('I'): 'ı',
         ord('Ğ'): 'ğ', ord('Ü'): 'ü',
@@ -157,14 +157,14 @@ class IcraUtils:
         """
         if not text:
             return 0.0
-        
+
         clean = re.sub(r'[^\d.,]', '', str(text))
         if not clean:
             return 0.0
         
         dot_count = clean.count('.')
         comma_count = clean.count(',')
-        
+
         # Her iki ayraç da var
         if dot_count > 0 and comma_count > 0:
             last_dot = clean.rfind('.')
@@ -175,14 +175,14 @@ class IcraUtils:
             else:
                 # US: 1,234.56
                 clean = clean.replace(',', '')
-        
+
         # Sadece nokta var
         elif dot_count > 0:
             if dot_count > 1:
                 clean = clean.replace('.', '')
             elif re.search(r'\.\d{3}$', clean):
                 clean = clean.replace('.', '')
-        
+
         # Sadece virgül var
         elif comma_count > 0:
             if comma_count > 1:
@@ -222,7 +222,7 @@ class IcraUtils:
                 datetime(2099, 12, 31), 9999,
                 RiskSeviyesi.GUVENLI, "Süre işlemez"
             )
-        
+
         # Yeni kanun (7343) sonrası
         if mal_turu == MalTuru.TASINIR:
             base_days = 180 if haciz_tarihi >= KANUN_7343_YURURLUK else 365
@@ -242,7 +242,7 @@ class IcraUtils:
             risk, aksiyon = RiskSeviyesi.ORTA, "Planla"
         else:
             risk, aksiyon = RiskSeviyesi.GUVENLI, "Rutin takip"
-        
+
         return HacizSureHesabi(haciz_tarihi, mal_turu, deadline, kalan, risk, aksiyon)
 
 
@@ -250,7 +250,7 @@ class IcraUtils:
 if __name__ == "__main__":
     print("🧪 IcraUtils Test")
     print("=" * 40)
-    
+
     # Tutar testleri
     test_cases = [
         ("1.234,56", 1234.56),
@@ -258,10 +258,10 @@ if __name__ == "__main__":
         ("1,234.56", 1234.56),
         ("45.678,90 TL", 45678.90),
     ]
-    
+
     for inp, expected in test_cases:
         result = IcraUtils.tutar_parse(inp)
         status = "✅" if abs(result - expected) < 0.01 else "❌"
         print(f"{status} '{inp}' -> {result} (beklenen: {expected})")
-    
+
     print("\n✅ Testler tamamlandı")
