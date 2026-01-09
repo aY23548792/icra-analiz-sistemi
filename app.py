@@ -77,15 +77,17 @@ with st.sidebar:
     
     # Yüklenen dosyaları session state'e kaydet (Kalıcılık için)
     if uploaded:
-        # Eğer yeni dosya geldiyse listeyi güncelle
-        # Not: Widget her rerun'da sıfırlanabilir, o yüzden state'e kopyalıyoruz
-        current_files = [(f.name, f.getvalue()) for f in uploaded]
+        # İsim bazlı değişiklik kontrolü (Daha sağlam)
+        new_files = [(f.name, f.getvalue()) for f in uploaded]
+        old_names = set(n for n, _ in st.session_state.master_files)
+        new_names = set(n for n, _ in new_files)
 
-        # Eğer state'deki ile farklıysa güncelle ve sonuçları temizle
-        if len(current_files) != len(st.session_state.master_files):
-            st.session_state.master_files = current_files
-            # Yeni dosya gelince eski analizleri silmek mantıklı olabilir
-            # st.session_state.banka_sonuc = None ... (İsteğe bağlı)
+        if old_names != new_names:
+            st.session_state.master_files = new_files
+            # Dosya seti değiştiyse eski sonuçları temizle
+            st.session_state.banka_sonuc = None
+            st.session_state.pdf_rapor = None
+            st.session_state.uyap_sonuc = None
     
     # Yüklü dosya sayısı göster
     if st.session_state.master_files:
