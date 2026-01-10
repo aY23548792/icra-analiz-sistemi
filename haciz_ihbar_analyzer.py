@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HACİZ İHBAR ANALYZER v12.3 (Enhanced Regex)
+HACİZ İHBAR ANALYZER v12.4 (Optimized)
+======================================
 """
 
 from dataclasses import dataclass, field
@@ -11,6 +12,7 @@ import re
 import os
 import zipfile
 import sys
+import concurrent.futures
 
 try:
     import pdfplumber
@@ -72,22 +74,26 @@ class HacizIhbarAnalyzer:
         "Türkiye Finans", "Odeabank", "Şekerbank", "ING", "HSBC"
     ]
     
-    # Genişletilmiş Negatif Desenler
-    MENFI_REGEX = [
+    # Pre-compiled Regex for Performance
+    MENFI_REGEX = [re.compile(p, re.I) for p in [
         r'hesap\s*bulunma', r'kayıt\s*yok', r'rastlanma', r'menfi',
         r'borçlu\s*adına\s*hesap\s*yok', r'herhangi\s*bir\s*hak\s*ve\s*alacak\s*yok',
         r'mevcut\s*değil', r'hesap\s*tespit\s*edileme', r'müşteri\s*kaydı\s*yok'
-    ]
-    
-    # Genişletilmiş Bakiye Yok Desenleri
-    BAKIYE_YOK_REGEX = [
+    ]]
+
+    BAKIYE_YOK_REGEX = [re.compile(p, re.I) for p in [
         r'bakiye\s*yok', r'bakiye\s*bulunma', r'yetersiz',
         r'blokeli\s*tutar\s*:\s*0', r'bakiye\s*:\s*0[,.]00',
         r'haczedilecek\s*bakiye\s*yok', r'bakiye\s*sıfır'
-    ]
+    ]]
+
+    BLOKE_REGEX = [re.compile(p, re.I | re.DOTALL) for p in [
+        r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*TL.*?bloke',
+        r'bloke.*?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*TL',
+        r'üzerine.*?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*TL.*?haciz'
+    ]]
 
     def batch_analiz(self, dosya_yollari: List[str]) -> HacizIhbarAnalizSonucu:
-        cevaplar = []
         flat_files = []
         for p in dosya_yollari:
             if os.path.isdir(p):
@@ -96,24 +102,35 @@ class HacizIhbarAnalyzer:
             else:
                 flat_files.append(p)
 
-        for yol in flat_files:
-            try:
-                metin = self._dosya_oku(yol)
-                if metin:
-                    cevaplar.append(self.analyze_response(metin))
-            except Exception as e:
-                print(f"Hata {yol}: {e}", file=sys.stderr)
+        cevaplar = []
+        # Parallel Processing
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_to_file = {executor.submit(self._process_single_file, f): f for f in flat_files}
+            for future in concurrent.futures.as_completed(future_to_file):
+                res = future.result()
+                if res:
+                    cevaplar.append(res)
 
         toplam = sum(c.tutar for c in cevaplar if c.durum == CevapDurumu.BLOKE_VAR)
         banka_count = len(set(c.muhatap for c in cevaplar if "Banka" in c.muhatap))
 
         return HacizIhbarAnalizSonucu(len(cevaplar), toplam, cevaplar, banka_count)
 
+    def _process_single_file(self, yol):
+        try:
+            metin = self._dosya_oku(yol)
+            if metin and len(metin.strip()) > 10: # Skip empty or too short files
+                return self.analyze_response(metin)
+        except Exception:
+            pass
+        return None
+
     def analyze_response(self, text: str) -> HacizIhbarCevabi:
-        clean = IcraUtils.clean_text(text)
+        # Limit text length to avoid regex hanging on massive files
+        process_text = text[:10000]
+        clean = IcraUtils.clean_text(process_text)
         muhatap = "Bilinmeyen Muhatap"
         
-        # Banka Tespiti
         for b in self.BANKALAR:
             if IcraUtils.clean_text(b) in clean:
                 muhatap = b + " Bankası"
@@ -123,26 +140,14 @@ class HacizIhbarAnalyzer:
         tutar = 0.0
         sonraki = "İncele"
 
-        # KEP
-        if "kep iletisi" in clean and len(text) < 500:
-            return HacizIhbarCevabi(muhatap, CevapDurumu.KEP, 0.0, "Bekle", text[:100])
+        if "kep iletisi" in clean and len(process_text) < 500:
+            return HacizIhbarCevabi(muhatap, CevapDurumu.KEP, 0.0, "Bekle", process_text[:100])
 
-        # 1. Önce Negatif Kontrol
-        if any(re.search(p, clean) for p in self.MENFI_REGEX):
-            return HacizIhbarCevabi(muhatap, CevapDurumu.MENFI, 0.0, "89/1 Başkasına", text[:200])
+        if any(p.search(clean) for p in self.MENFI_REGEX):
+            return HacizIhbarCevabi(muhatap, CevapDurumu.MENFI, 0.0, "89/1 Başkasına", process_text[:200])
 
-        # 2. Bloke Tutar Kontrolü
-        # Regex: Tutar ... Bloke veya Bloke ... Tutar
-        # Örn: "15.000 TL bloke edilmiştir" veya "Bloke tutarı: 15.000 TL"
-        
-        regex_list = [
-            r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*TL.*?bloke', # 100 TL bloke
-            r'bloke.*?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*TL', # Bloke: 100 TL
-            r'üzerine.*?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*TL.*?haciz' # Üzerine 100 TL haciz
-        ]
-        
-        for regex in regex_list:
-            match = re.search(regex, text, re.I | re.DOTALL)
+        for regex in self.BLOKE_REGEX:
+            match = regex.search(process_text)
             if match:
                 parsed_tutar = IcraUtils.tutar_parse(match.group(1))
                 if parsed_tutar > 0:
@@ -152,15 +157,14 @@ class HacizIhbarAnalyzer:
                     break
         
         if durum == CevapDurumu.BELIRSIZ:
-            if any(re.search(p, clean) for p in self.BAKIYE_YOK_REGEX):
+            if any(p.search(clean) for p in self.BAKIYE_YOK_REGEX):
                  durum = CevapDurumu.HESAP_VAR_BAKIYE_YOK
                  sonraki = "89/2 Gönder"
             elif "haciz" in clean or "bloke" in clean:
-                 # Bloke kelimesi var ama tutar bulamadık
                  durum = CevapDurumu.BLOKE_VAR
-                 sonraki = "Manuel Kontrol (Tutar Okunamadı)"
+                 sonraki = "Manuel Kontrol"
 
-        return HacizIhbarCevabi(muhatap, durum, tutar, sonraki, text[:300])
+        return HacizIhbarCevabi(muhatap, durum, tutar, sonraki, process_text[:300])
 
     def _dosya_oku(self, yol):
         try:
@@ -169,13 +173,16 @@ class HacizIhbarAnalyzer:
                     xmls = [n for n in z.namelist() if n.endswith('.xml')]
                     target = 'content.xml' if 'content.xml' in xmls else (xmls[0] if xmls else None)
                     if target:
-                        raw = z.read(target).decode('utf-8', 'ignore')
-                        return re.sub(r'<[^>]+>', ' ', raw)
+                        return re.sub(r'<[^>]+>', ' ', z.read(target).decode('utf-8', 'ignore'))
+
             if yol.endswith('.pdf') and PDFPLUMBER_OK:
+                # Optimized PDF read: only first 3 pages
                 with pdfplumber.open(yol) as pdf:
-                    return "\n".join([p.extract_text() or "" for p in pdf.pages])
+                    pages = pdf.pages[:3]
+                    return "\n".join([p.extract_text() or "" for p in pages])
+
             if os.path.isfile(yol):
                  with open(yol, 'r', encoding='utf-8', errors='ignore') as f:
-                    return f.read()
+                    return f.read(20000) # Limit read size
             return ""
         except: return ""
