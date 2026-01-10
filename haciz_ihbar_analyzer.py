@@ -1,32 +1,38 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HACİZ İHBAR ANALYZER v11.0 - ROBUST EDITION
+HACİZ İHBAR ANALYZER v12.3 (Enhanced Regex)
 ===========================================
-Banka cevaplarını analiz eder. "Ghost Bloke" ve "Missed Bloke" sorunlarını çözer.
-Strateji: Geniş Arama -> Negatif Eleme -> Skorlama
+Gelişmiş regex desenleri ile banka cevaplarını daha hassas analiz eder.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List
 from enum import Enum
-from datetime import datetime
 import re
 import os
 import zipfile
+import sys
+
+try:
+    import pdfplumber
+    PDFPLUMBER_OK = True
+except ImportError:
+    PDFPLUMBER_OK = False
+
 try:
     from icra_analiz_v2 import IcraUtils
 except ImportError:
-    class IcraUtils: # Fallback
+    class IcraUtils:
         @staticmethod
-        def clean_text(t): return t.lower()
+        def clean_text(t): return t.lower() if t else ""
         @staticmethod
-        def tutar_parse(t): return 0.0
-
-class MuhatapTuru(Enum):
-    BANKA = "🏦 Banka"
-    TUZEL = "🏢 Şirket"
-    DIGER = "❓ Diğer"
+        def tutar_parse(t):
+            if not t: return 0.0
+            clean = re.sub(r'[^\d.,]', '', str(t))
+            clean = clean.replace('.', '').replace(',', '.')
+            try: return float(clean)
+            except: return 0.0
 
 class CevapDurumu(Enum):
     BLOKE_VAR = "💰 BLOKE VAR"
@@ -35,6 +41,7 @@ class CevapDurumu(Enum):
     ITIRAZ = "⚖️ İTİRAZ"
     BELIRSIZ = "❓ İNCELENMELİ"
     KEP = "📧 KEP İLETİSİ"
+    HESAP_YOK = "❌ HESAP YOK"
 
 @dataclass
 class HacizIhbarCevabi:
@@ -49,114 +56,128 @@ class HacizIhbarAnalizSonucu:
     toplam_dosya: int = 0
     toplam_bloke: float = 0.0
     cevaplar: List[HacizIhbarCevabi] = field(default_factory=list)
+    banka_sayisi: int = 0
+
+    @property
+    def ozet_rapor(self):
+        lines = [f"Toplam Dosya: {self.toplam_dosya}", f"Toplam Bloke: {self.toplam_bloke:,.2f} TL", "-"*20]
+        for c in self.cevaplar:
+            val = c.durum.value if hasattr(c.durum, 'value') else str(c.durum)
+            lines.append(f"{c.muhatap}: {val} - {c.tutar:,.2f} TL ({c.sonraki_adim})")
+        return "\n".join(lines)
 
 class HacizIhbarAnalyzer:
     
-    BANKALAR = ["Ziraat", "Vakıf", "Halk", "Garanti", "Yapı Kredi", "İş Bankası", "Akbank", "QNB", "Deniz", "TEB", "Kuveyt", "Finans"]
-    
-    # Kesin Negatif İfadeler
-    MENFI_REGEX = [
-        r'hesap\s*bulunma',
-        r'kayıt\s*yok',
-        r'rastlanma',
-        r'menfi',
-        r'borçlu\s*adına\s*hesap\s*yok',
-        r'herhangi\s*bir\s*hak\s*ve\s*alacak\s*yok'
+    BANKALAR = [
+        "Ziraat", "Vakıf", "Halk", "Garanti", "Yapı Kredi", "İş Bankası",
+        "Akbank", "QNB", "Finans", "Deniz", "TEB", "Kuveyt", "Albaraka",
+        "Türkiye Finans", "Odeabank", "Şekerbank", "ING", "HSBC"
     ]
     
-    # Bakiye Yok İfadeleri
+    # Genişletilmiş Negatif Desenler
+    MENFI_REGEX = [
+        r'hesap\s*bulunma', r'kayıt\s*yok', r'rastlanma', r'menfi',
+        r'borçlu\s*adına\s*hesap\s*yok', r'herhangi\s*bir\s*hak\s*ve\s*alacak\s*yok',
+        r'mevcut\s*değil', r'hesap\s*tespit\s*edileme', r'müşteri\s*kaydı\s*yok'
+    ]
+    
+    # Genişletilmiş Bakiye Yok Desenleri
     BAKIYE_YOK_REGEX = [
-        r'bakiye\s*yok',
-        r'bakiye\s*bulunma',
-        r'yetersiz',
-        r'blokeli\s*tutar\s*:\s*0',
-        r'bakiye\s*:\s*0[,.]00'
+        r'bakiye\s*yok', r'bakiye\s*bulunma', r'yetersiz',
+        r'blokeli\s*tutar\s*:\s*0', r'bakiye\s*:\s*0[,.]00',
+        r'haczedilecek\s*bakiye\s*yok', r'bakiye\s*sıfır'
     ]
 
     def batch_analiz(self, dosya_yollari: List[str]) -> HacizIhbarAnalizSonucu:
         cevaplar = []
-        for yol in dosya_yollari:
+        flat_files = []
+        for p in dosya_yollari:
+            if os.path.isdir(p):
+                for r, _, fs in os.walk(p):
+                    for f in fs: flat_files.append(os.path.join(r, f))
+            else:
+                flat_files.append(p)
+
+        for yol in flat_files:
             try:
                 metin = self._dosya_oku(yol)
                 if metin:
                     cevaplar.append(self.analyze_response(metin))
             except Exception as e:
-                print(f"Hata {yol}: {e}")
+                print(f"Hata {yol}: {e}", file=sys.stderr)
 
         toplam = sum(c.tutar for c in cevaplar if c.durum == CevapDurumu.BLOKE_VAR)
-        return HacizIhbarAnalizSonucu(len(cevaplar), toplam, cevaplar)
+        banka_count = len(set(c.muhatap for c in cevaplar if "Banka" in c.muhatap))
+
+        return HacizIhbarAnalizSonucu(len(cevaplar), toplam, cevaplar, banka_count)
 
     def analyze_response(self, text: str) -> HacizIhbarCevabi:
         clean = IcraUtils.clean_text(text)
+        muhatap = "Bilinmeyen Muhatap"
         
-        # 1. Muhatap Belirle
-        muhatap = "Bilinmeyen"
+        # Banka Tespiti
         for b in self.BANKALAR:
             if IcraUtils.clean_text(b) in clean:
-                muhatap = b
+                muhatap = b + " Bankası"
                 break
         
         durum = CevapDurumu.BELIRSIZ
         tutar = 0.0
         sonraki = "İncele"
 
-        # 2. KEP Kontrolü
+        # KEP
         if "kep iletisi" in clean and len(text) < 500:
             return HacizIhbarCevabi(muhatap, CevapDurumu.KEP, 0.0, "Bekle", text[:100])
 
-        # 3. Negatif Kontrol (Öncelikli)
+        # 1. Önce Negatif Kontrol
         if any(re.search(p, clean) for p in self.MENFI_REGEX):
-            return HacizIhbarCevabi(muhatap, CevapDurumu.MENFI, 0.0, "89/1 Başkasına", text[:100])
+            return HacizIhbarCevabi(muhatap, CevapDurumu.MENFI, 0.0, "89/1 Başkasına", text[:200])
 
-        # 4. Bloke Arama (Genişletilmiş ve Güçlü Regex)
-        # Önce net "bloke: 123 TL" kalıplarını arıyoruz
-        # Regex: (Tutar) ... (Bloke) veya (Bloke) ... (Tutar)
+        # 2. Bloke Tutar Kontrolü
+        # Regex: Tutar ... Bloke veya Bloke ... Tutar
+        # Örn: "15.000 TL bloke edilmiştir" veya "Bloke tutarı: 15.000 TL"
         
-        bloke_bulundu = False
+        regex_list = [
+            r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*TL.*?bloke', # 100 TL bloke
+            r'bloke.*?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*TL', # Bloke: 100 TL
+            r'üzerine.*?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*TL.*?haciz' # Üzerine 100 TL haciz
+        ]
         
-        # Pattern A: "33.534,33 TL ... bloke"
-        match_a = re.search(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*TL.*?bloke', text, re.I | re.DOTALL)
-        if match_a:
-            tutar = IcraUtils.tutar_parse(match_a.group(1))
-            bloke_bulundu = True
+        for regex in regex_list:
+            match = re.search(regex, text, re.I | re.DOTALL)
+            if match:
+                parsed_tutar = IcraUtils.tutar_parse(match.group(1))
+                if parsed_tutar > 0:
+                    tutar = parsed_tutar
+                    durum = CevapDurumu.BLOKE_VAR
+                    sonraki = "Mahsup İste"
+                    break
+        
+        if durum == CevapDurumu.BELIRSIZ:
+            if any(re.search(p, clean) for p in self.BAKIYE_YOK_REGEX):
+                 durum = CevapDurumu.HESAP_VAR_BAKIYE_YOK
+                 sonraki = "89/2 Gönder"
+            elif "haciz" in clean or "bloke" in clean:
+                 # Bloke kelimesi var ama tutar bulamadık
+                 durum = CevapDurumu.BLOKE_VAR
+                 sonraki = "Manuel Kontrol (Tutar Okunamadı)"
 
-        # Pattern B: "bloke ... 33.534,33 TL"
-        if not bloke_bulundu:
-            match_b = re.search(r'bloke.*?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*TL', text, re.I | re.DOTALL)
-            if match_b:
-                tutar = IcraUtils.tutar_parse(match_b.group(1))
-                bloke_bulundu = True
-        
-        if bloke_bulundu and tutar > 0:
-            durum = CevapDurumu.BLOKE_VAR
-            sonraki = "Mahsup İste"
-        elif any(re.search(p, clean) for p in self.BAKIYE_YOK_REGEX):
-             durum = CevapDurumu.HESAP_VAR_BAKIYE_YOK
-             sonraki = "89/2 Gönder"
-        elif "haciz" in clean or "bloke" in clean:
-             # Kelime var ama tutar okunamadı
-             durum = CevapDurumu.BLOKE_VAR
-             sonraki = "Manuel Kontrol (Tutar Okunamadı)"
-        
-        return HacizIhbarCevabi(muhatap, durum, tutar, sonraki, text[:200])
+        return HacizIhbarCevabi(muhatap, durum, tutar, sonraki, text[:300])
 
     def _dosya_oku(self, yol):
         try:
-            # UDF ise XML parse et
             if yol.endswith('.udf'):
                 with zipfile.ZipFile(yol) as z:
-                    if 'content.xml' in z.namelist():
-                        raw = z.read('content.xml').decode('utf-8', 'ignore')
-                        # Basit XML temizliği
+                    xmls = [n for n in z.namelist() if n.endswith('.xml')]
+                    target = 'content.xml' if 'content.xml' in xmls else (xmls[0] if xmls else None)
+                    if target:
+                        raw = z.read(target).decode('utf-8', 'ignore')
                         return re.sub(r'<[^>]+>', ' ', raw)
-            
-            # PDF ise pdfplumber (Import try/except içinde olmalı)
-            if yol.endswith('.pdf'):
-                import pdfplumber
+            if yol.endswith('.pdf') and PDFPLUMBER_OK:
                 with pdfplumber.open(yol) as pdf:
                     return "\n".join([p.extract_text() or "" for p in pdf.pages])
-            
-            # Text/XML
-            with open(yol, 'r', encoding='utf-8', errors='ignore') as f:
-                return f.read()
+            if os.path.isfile(yol):
+                 with open(yol, 'r', encoding='utf-8', errors='ignore') as f:
+                    return f.read()
+            return ""
         except: return ""
