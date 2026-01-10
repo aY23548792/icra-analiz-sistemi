@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 """
 UYAP DOSYA ANALYZER v12.3 (Enhanced Classification)
-===================================================
-Genişletilmiş evrak sınıflandırma ve özet raporlama.
 """
 import os
 import zipfile

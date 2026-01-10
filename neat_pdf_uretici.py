@@ -2,9 +2,6 @@
 # -*- coding: utf-8 -*-
 """
 NEAT PDF ÜRETİCİ v12.3 (Rich Formatting Edition)
-================================================
-UDF XML'ini parse ederek HTML benzeri zengin içerikli PDF üretir.
-Bold, Altı çizili, Hizalama ve Tablo desteği ekler.
 """
 
 import os

@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 """
 HACİZ İHBAR ANALYZER v12.3 (Enhanced Regex)
-===========================================
-Gelişmiş regex desenleri ile banka cevaplarını daha hassas analiz eder.
 """
 
 from dataclasses import dataclass, field
