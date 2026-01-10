@@ -157,7 +157,7 @@ if modul == "🏦 Banka Analizi":
 
         st.divider()
         t1, t2 = st.tabs(["Detaylar", "İndir"])
-
+        
         with t1:
             for c in res.cevaplar:
                 # Enum değerine güvenli erişim
