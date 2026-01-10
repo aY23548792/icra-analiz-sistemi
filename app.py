@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-İCRA ANALİZ PRO v12.1 (Stateless Fix)
-=====================================
-Modüller arası geçişte dosya kaybını önleyen versiyon.
+İCRA ANALİZ PRO v12.2 (Final Robust)
+====================================
+Tam hata korumalı, stateless ve modüler yapı.
 """
 
 import streamlit as st
@@ -13,38 +13,50 @@ import shutil
 import io
 from datetime import datetime
 
-# === MODULE IMPORTS ===
+# === MODULE IMPORTS (SAFE) ===
+# Modüller yüklenemezse False olur, sınıflar None atanır
+BANKA_OK = False
+HacizIhbarAnalyzer = None
+CevapDurumu = None
+
 try:
     from haciz_ihbar_analyzer import HacizIhbarAnalyzer, CevapDurumu
     BANKA_OK = True
-except ImportError:
-    BANKA_OK = False
+except ImportError as e:
+    print(f"Banka Modülü Hatası: {e}")
+
+PDF_OK = False
+NeatPDFUretici = None
+REPORTLAB_OK = False
 
 try:
     from neat_pdf_uretici import NeatPDFUretici, REPORTLAB_OK
     PDF_OK = REPORTLAB_OK
-except ImportError:
-    PDF_OK = False
+except ImportError as e:
+    print(f"PDF Modülü Hatası: {e}")
+
+UYAP_OK = False
+UYAPDosyaAnalyzer = None
 
 try:
     from uyap_dosya_analyzer import UYAPDosyaAnalyzer
     UYAP_OK = True
-except ImportError:
-    UYAP_OK = False
+except ImportError as e:
+    print(f"UYAP Modülü Hatası: {e}")
 
+PANDAS_OK = False
 try:
     import pandas as pd
     PANDAS_OK = True
 except ImportError:
-    PANDAS_OK = False
+    pass
 
 # === PAGE CONFIG ===
 st.set_page_config(page_title="İcra Analiz Pro", page_icon="⚖️", layout="wide")
 
 # === SESSION STATE INIT ===
-# Dosyaları ve sonuçları burada saklayacağız
 if 'master_files' not in st.session_state:
-    st.session_state.master_files = [] # List of (name, bytes)
+    st.session_state.master_files = []
 if 'banka_sonuc' not in st.session_state:
     st.session_state.banka_sonuc = None
 if 'pdf_rapor' not in st.session_state:
@@ -60,14 +72,11 @@ def clear_all():
     st.session_state.uyap_sonuc = None
     st.rerun()
 
-# === SIDEBAR (MERKEZİ KONTROL) ===
+# === SIDEBAR ===
 with st.sidebar:
     st.title("⚖️ İcra Analiz Pro")
-
-    # 1. DOSYA YÜKLEME (Merkezi)
     st.subheader("1. Dosya Yükle")
 
-    # Dosya yükleyici widget
     uploaded = st.file_uploader(
         "ZIP, UDF veya PDF yükleyin",
         type=['zip', 'pdf', 'udf'],
@@ -75,21 +84,17 @@ with st.sidebar:
         key="main_uploader"
     )
     
-    # Yüklenen dosyaları session state'e kaydet (Kalıcılık için)
     if uploaded:
-        # İsim bazlı değişiklik kontrolü (Daha sağlam)
         new_files = [(f.name, f.getvalue()) for f in uploaded]
         old_names = set(n for n, _ in st.session_state.master_files)
         new_names = set(n for n, _ in new_files)
 
         if old_names != new_names:
             st.session_state.master_files = new_files
-            # Dosya seti değiştiyse eski sonuçları temizle
             st.session_state.banka_sonuc = None
             st.session_state.pdf_rapor = None
             st.session_state.uyap_sonuc = None
     
-    # Yüklü dosya sayısı göster
     if st.session_state.master_files:
         st.success(f"📂 Hafızada {len(st.session_state.master_files)} dosya var")
         if st.button("🗑️ Temizle", use_container_width=True):
@@ -98,8 +103,6 @@ with st.sidebar:
         st.warning("Henüz dosya yok.")
 
     st.divider()
-
-    # 2. MODÜL SEÇİMİ
     st.subheader("2. İşlem Seç")
     modul = st.radio(
         "Modül:",
@@ -107,12 +110,10 @@ with st.sidebar:
         index=0
     )
 
-# === YARDIMCI: GEÇİCİ DOSYA OLUŞTUR ===
+# === TEMP FILE HELPER ===
 def save_temp_files():
-    """State'deki dosyaları temp klasöre yazar ve path listesi döner"""
     if not st.session_state.master_files:
         return [], None
-
     temp_dir = tempfile.mkdtemp()
     paths = []
     for name, data in st.session_state.master_files:
@@ -120,7 +121,6 @@ def save_temp_files():
         with open(path, "wb") as f:
             f.write(data)
         paths.append(path)
-
     return paths, temp_dir
 
 # ============================================================================
@@ -134,7 +134,7 @@ if modul == "🏦 Banka Analizi":
         st.stop()
 
     if not BANKA_OK:
-        st.error("Modül eksik!")
+        st.error("Modül eksik! (haciz_ihbar_analyzer.py)")
         st.stop()
 
     if st.button("🔍 Analiz Et", type="primary"):
@@ -142,11 +142,10 @@ if modul == "🏦 Banka Analizi":
             paths, tdir = save_temp_files()
             try:
                 analyzer = HacizIhbarAnalyzer()
-                # Batch analiz tüm dosyaları alır
                 res = analyzer.batch_analiz(paths)
                 st.session_state.banka_sonuc = res
             finally:
-                shutil.rmtree(tdir)
+                if tdir: shutil.rmtree(tdir)
         st.rerun()
 
     if st.session_state.banka_sonuc:
@@ -154,21 +153,30 @@ if modul == "🏦 Banka Analizi":
         c1, c2, c3 = st.columns(3)
         c1.metric("Toplam", res.toplam_dosya)
         c2.metric("Bloke", f"{res.toplam_bloke:,.2f} ₺")
-        c3.metric("Banka", res.banka_sayisi)
+        c3.metric("Banka", getattr(res, 'banka_sayisi', 0)) # Güvenli erişim
 
         st.divider()
-        
         t1, t2 = st.tabs(["Detaylar", "İndir"])
+
         with t1:
             for c in res.cevaplar:
-                icon = "✅" if c.durum == CevapDurumu.BLOKE_VAR else "ℹ️"
-                with st.expander(f"{icon} {c.muhatap} - {c.durum.value}"):
+                # Enum değerine güvenli erişim
+                durum_val = c.durum.value if hasattr(c.durum, 'value') else str(c.durum)
+                is_bloke = durum_val == "💰 BLOKE VAR"
+                icon = "✅" if is_bloke else "ℹ️"
+
+                with st.expander(f"{icon} {c.muhatap} - {durum_val}"):
                     st.write(f"Tutar: {c.tutar:,.2f} TL")
                     st.write(f"Öneri: {c.sonraki_adim}")
                     st.caption(c.ham_metin[:200] + "...")
 
         with t2:
-            st.download_button("Rapor İndir", res.ozet_rapor, "banka_rapor.txt")
+            try:
+                # Ozet rapor string ise direkt ver, değilse oluştur
+                rapor_txt = res.ozet_rapor if isinstance(res.ozet_rapor, str) else "Rapor oluşturulamadı."
+                st.download_button("Rapor İndir", rapor_txt, "banka_rapor.txt")
+            except:
+                st.error("Rapor indirilemedi.")
 
 # ============================================================================
 # MODÜL 2: NEAT PDF
@@ -181,7 +189,7 @@ elif modul == "📄 Neat PDF":
         st.stop()
 
     if not PDF_OK:
-        st.error("ReportLab eksik!")
+        st.error("ReportLab eksik! (requirements.txt kontrol edin)")
         st.stop()
 
     baslik = st.text_input("PDF Başlığı", "İcra Dosyası")
@@ -190,9 +198,7 @@ elif modul == "📄 Neat PDF":
         with st.spinner("PDF hazırlanıyor..."):
             paths, tdir = save_temp_files()
             try:
-                # Eğer tek dosya varsa onu, çoksa klasörü ver
                 target = paths[0] if len(paths) == 1 else tdir
-
                 uretici = NeatPDFUretici()
                 out_path = os.path.join(tdir, "output.pdf")
                 rapor = uretici.uret(target, out_path, baslik)
@@ -204,7 +210,7 @@ elif modul == "📄 Neat PDF":
                             "info": rapor
                         }
             finally:
-                shutil.rmtree(tdir)
+                if tdir: shutil.rmtree(tdir)
         st.rerun()
 
     if st.session_state.pdf_rapor:
@@ -229,7 +235,7 @@ elif modul == "📁 Dosya Analizi":
         st.stop()
 
     if not UYAP_OK:
-        st.error("Modül eksik!")
+        st.error("Modül eksik! (uyap_dosya_analyzer.py)")
         st.stop()
 
     if st.button("🚀 Başlat", type="primary"):
@@ -237,18 +243,12 @@ elif modul == "📁 Dosya Analizi":
             paths, tdir = save_temp_files()
             try:
                 analyzer = UYAPDosyaAnalyzer()
-                # Batch desteği için ilk dosyayı veya klasörü veriyoruz
-                # (UYAP analizi genelde tek ZIP üzerinden çalışır)
-                if len(paths) == 1 and paths[0].endswith('.zip'):
-                    target = paths[0]
-                else:
-                    st.warning("UYAP analizi için tek bir ZIP dosyası önerilir.")
-                    target = paths[0] # İlkini dene
-
+                # Genelde ZIP beklenir
+                target = paths[0] if len(paths) == 1 and paths[0].endswith('.zip') else paths[0]
                 res = analyzer.analiz_et(target)
                 st.session_state.uyap_sonuc = res
             finally:
-                shutil.rmtree(tdir)
+                if tdir: shutil.rmtree(tdir)
         st.rerun()
 
     if st.session_state.uyap_sonuc:
@@ -262,4 +262,5 @@ elif modul == "📁 Dosya Analizi":
             for a in res.aksiyonlar:
                 st.warning(f"{a.baslik}: {a.aciklama}")
 
-        st.download_button("Rapor İndir", res.ozet_rapor, "uyap_analiz.txt")
+        if hasattr(res, 'ozet_rapor') and res.ozet_rapor:
+            st.download_button("Rapor İndir", res.ozet_rapor, "uyap_analiz.txt")
