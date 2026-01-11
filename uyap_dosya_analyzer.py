@@ -113,14 +113,14 @@ class DosyaAnalizSonucu:
 class UYAPDosyaAnalyzer:
     """
     UYAP ZIP dosyası analizörü
-
+    
     Özellikler:
     - 15+ evrak kategorisi tanıma
     - Tebligat durumu tespiti
     - Haciz süre hesaplaması (İİK 106/110)
     - Aksiyon önerileri
     """
-
+    
     # === EVRAK SINIFLANDIRMA PATTERNLERİ ===
     EVRAK_PATTERNS = {
         EvrakKategorisi.ODEME_EMRI: [
@@ -135,7 +135,7 @@ class UYAPDosyaAnalyzer:
         ],
         EvrakKategorisi.HACIZ_IHBAR: [
             r'89/1', r'89/2', r'89/3', r'89_1', r'89_2', r'89_3',
-            r'haciz\s*ihbar', r'birinci\s*haciz', r'ikinci\s*haciz',
+            r'haciz\s*ihbar', r'birinci\s*haciz', r'ikinci\s*haciz', 
             r'[uü][cç][uü]nc[uü]\s*haciz', r'ucuncu\s*haciz'
         ],
         EvrakKategorisi.BANKA_CEVABI: [
@@ -176,7 +176,7 @@ class UYAPDosyaAnalyzer:
             r'talep', r'dilek[cç]e', r'dilekce', r'beyan', r'ba[sş]vuru', r'basvuru'
         ],
     }
-
+    
     # Haciz türü belirleme (talep hariç)
     HACIZ_KEYWORDS = {
         HacizTuru.BANKA_89_1: [r'89/1', r'89/2', r'89/3', r'banka\s*haciz'],
@@ -185,7 +185,7 @@ class UYAPDosyaAnalyzer:
         HacizTuru.MAAS: [r'maaş', r'ücret\s*haciz', r'sgk'],
         HacizTuru.MENKUL: [r'menkul', r'eşya', r'muhafaza'],
     }
-
+    
     # Tebligat durumu belirleme
     TEBLIGAT_KEYWORDS = {
         TebligatDurumu.BILA: [r'bila', r'iade', r'tebliğ\s*edilemedi', r'bulunamadı'],
@@ -194,7 +194,7 @@ class UYAPDosyaAnalyzer:
         TebligatDurumu.MERNIS: [r'mernis', r'nüfus\s*kayıt'],
         TebligatDurumu.TEBLIG_EDILDI: [r'tebliğ\s*edildi', r'tebellüğ', r'imza'],
     }
-
+    
     def __init__(self):
         # Pre-compile patterns
         self._evrak_compiled = {
@@ -209,15 +209,15 @@ class UYAPDosyaAnalyzer:
             durum: [re.compile(p, re.IGNORECASE) for p in patterns]
             for durum, patterns in self.TEBLIGAT_KEYWORDS.items()
         }
-
+    
     def analiz_et(self, zip_yolu: str) -> DosyaAnalizSonucu:
         """Ana analiz fonksiyonu"""
         sonuc = DosyaAnalizSonucu()
-
+        
         if not os.path.exists(zip_yolu):
             sonuc.ozet_rapor = f"Hata: Dosya bulunamadı - {zip_yolu}"
             return sonuc
-
+        
         try:
             # ZIP mi tek dosya mı?
             if zip_yolu.endswith('.zip'):
@@ -225,36 +225,36 @@ class UYAPDosyaAnalyzer:
             else:
                 # Tek dosya
                 self._analiz_dosya(zip_yolu, sonuc)
-
+            
             # Evrak dağılımı hesapla
             for evrak in sonuc.evraklar:
                 kategori = evrak.evrak_turu.value
                 sonuc.evrak_dagilimi[kategori] = sonuc.evrak_dagilimi.get(kategori, 0) + 1
-
+            
             # Aksiyon önerileri oluştur
             self._olustur_aksiyonlar(sonuc)
-
+            
             # Özet rapor oluştur
             sonuc.ozet_rapor = self._olustur_rapor(sonuc)
-
+            
         except Exception as e:
             sonuc.ozet_rapor = f"Analiz Hatası: {e}"
-
+        
         return sonuc
-
+    
     def _analiz_zip(self, zip_yolu: str, sonuc: DosyaAnalizSonucu):
         """ZIP dosyasını analiz et"""
         with zipfile.ZipFile(zip_yolu, 'r') as zf:
             for name in zf.namelist():
                 sonuc.toplam_evrak += 1
-
+                
                 # Dosya tarihini al
                 try:
                     info = zf.getinfo(name)
                     dosya_tarihi = datetime(*info.date_time[:6])
                 except:
                     dosya_tarihi = None
-
+                
                 # Dosya içeriğini oku (sınıflandırma için)
                 icerik = ""
                 try:
@@ -263,7 +263,7 @@ class UYAPDosyaAnalyzer:
                         icerik = re.sub(r'<[^>]+>', ' ', icerik)  # XML tag temizle
                 except:
                     pass
-
+                
                 # Evrak sınıflandır
                 evrak_turu = self._siniflandir_evrak(name, icerik)
                 sonuc.evraklar.append(EvrakBilgisi(
@@ -271,7 +271,7 @@ class UYAPDosyaAnalyzer:
                     evrak_turu=evrak_turu,
                     tarih=dosya_tarihi
                 ))
-
+                
                 # Tebligat analizi
                 if evrak_turu == EvrakKategorisi.TEBLIGAT:
                     tebligat_durum = self._tespit_tebligat_durumu(name, icerik)
@@ -280,13 +280,13 @@ class UYAPDosyaAnalyzer:
                         tarih=dosya_tarihi,
                         durum=tebligat_durum
                     ))
-
+                
                 # Haciz analizi (TALEP hariç!)
                 name_lower = name.lower()
                 if ("haciz" in name_lower or "yakalama" in name_lower) and "talep" not in name_lower:
                     haciz_turu = self._tespit_haciz_turu(name, icerik)
                     kalan_gun, risk = self._hesapla_haciz_suresi(dosya_tarihi, haciz_turu)
-
+                    
                     sonuc.hacizler.append(HacizBilgisi(
                         tur=haciz_turu,
                         tarih=dosya_tarihi,
@@ -294,56 +294,56 @@ class UYAPDosyaAnalyzer:
                         risk=risk,
                         dosya_adi=name
                     ))
-
+    
     def _analiz_dosya(self, dosya_yolu: str, sonuc: DosyaAnalizSonucu):
         """Tek dosya analizi"""
         sonuc.toplam_evrak = 1
-
+        
         try:
             dosya_tarihi = datetime.fromtimestamp(os.path.getmtime(dosya_yolu))
         except:
             dosya_tarihi = None
-
+        
         dosya_adi = os.path.basename(dosya_yolu)
         evrak_turu = self._siniflandir_evrak(dosya_adi, "")
-
+        
         sonuc.evraklar.append(EvrakBilgisi(
             dosya_adi=dosya_adi,
             evrak_turu=evrak_turu,
             tarih=dosya_tarihi
         ))
-
+    
     def _siniflandir_evrak(self, dosya_adi: str, icerik: str) -> EvrakKategorisi:
         """Evrak kategorisini belirle"""
         text = f"{dosya_adi} {icerik}".lower()
-
+        
         # Öncelik sırasına göre kontrol
         for kategori, patterns in self._evrak_compiled.items():
             if any(p.search(text) for p in patterns):
                 return kategori
-
+        
         return EvrakKategorisi.DIGER
-
+    
     def _tespit_tebligat_durumu(self, dosya_adi: str, icerik: str) -> TebligatDurumu:
         """Tebligat durumunu belirle"""
         text = f"{dosya_adi} {icerik}".lower()
-
+        
         for durum, patterns in self._tebligat_compiled.items():
             if any(p.search(text) for p in patterns):
                 return durum
-
+        
         return TebligatDurumu.BILINMIYOR
-
+    
     def _tespit_haciz_turu(self, dosya_adi: str, icerik: str) -> HacizTuru:
         """Haciz türünü belirle"""
         text = f"{dosya_adi} {icerik}".lower()
-
+        
         for tur, patterns in self._haciz_compiled.items():
             if any(p.search(text) for p in patterns):
                 return tur
-
+        
         return HacizTuru.DIGER
-
+    
     def _hesapla_haciz_suresi(self, haciz_tarihi: Optional[datetime], haciz_turu: HacizTuru) -> tuple:
         """
         İİK 106/110 süre hesapla
@@ -361,7 +361,7 @@ class UYAPDosyaAnalyzer:
         # Banka ve maaş hacizlerinde süre yok (İİK 106/110 kapsamı dışında)
         if haciz_turu in [HacizTuru.BANKA_89_1, HacizTuru.MAAS]:
             return 9999, RiskSeviyesi.GUVENLI
-
+        
         bugun = datetime.now()
 
         # 7343 sonrası: HEPSİ 1 YIL (365 gün) - Taşınır/taşınmaz ayrımı YOK!
@@ -370,7 +370,7 @@ class UYAPDosyaAnalyzer:
         from datetime import timedelta
         son_gun = haciz_tarihi + timedelta(days=gun)
         kalan = (son_gun - bugun).days
-
+        
         # Risk seviyesi
         if kalan < 0:
             risk = RiskSeviyesi.DUSMUS
@@ -382,9 +382,9 @@ class UYAPDosyaAnalyzer:
             risk = RiskSeviyesi.ORTA
         else:
             risk = RiskSeviyesi.DUSUK
-
+        
         return kalan, risk
-
+    
     def _olustur_aksiyonlar(self, sonuc: DosyaAnalizSonucu):
         """Aksiyon önerileri oluştur"""
         # Bila tebligat kontrolü
@@ -395,7 +395,7 @@ class UYAPDosyaAnalyzer:
                 aciklama=f"{bila_sayisi} adet tebligat bila dönmüş. Mernis/Madde 21 sorgulayın.",
                 oncelik=IslemDurumu.KRITIK
             ))
-
+        
         # Kritik haciz süresi kontrolü
         kritik_hacizler = [h for h in sonuc.hacizler if h.risk == RiskSeviyesi.KRITIK]
         if kritik_hacizler:
@@ -404,7 +404,7 @@ class UYAPDosyaAnalyzer:
                 aciklama=f"{len(kritik_hacizler)} adet haciz süresi dolmak üzere! ACİL satış talebi.",
                 oncelik=IslemDurumu.KRITIK
             ))
-
+        
         # Düşmüş haciz kontrolü
         dusmus_hacizler = [h for h in sonuc.hacizler if h.risk == RiskSeviyesi.DUSMUS]
         if dusmus_hacizler:
@@ -413,7 +413,7 @@ class UYAPDosyaAnalyzer:
                 aciklama=f"{len(dusmus_hacizler)} adet haciz süresi dolmuş. Yeniden haciz gerekli!",
                 oncelik=IslemDurumu.KRITIK
             ))
-
+        
         # Haciz yoksa öneri
         if not sonuc.hacizler:
             sonuc.aksiyonlar.append(AksiyonOnerisi(
@@ -421,7 +421,7 @@ class UYAPDosyaAnalyzer:
                 aciklama="Malvarlığı sorgusu yapın (Araç/Tapu/Banka/SGK).",
                 oncelik=IslemDurumu.UYARI
             ))
-
+        
         # Genel bilgi
         if sonuc.hacizler and not kritik_hacizler and not dusmus_hacizler:
             sonuc.aksiyonlar.append(AksiyonOnerisi(
@@ -429,7 +429,7 @@ class UYAPDosyaAnalyzer:
                 aciklama=f"{len(sonuc.hacizler)} adet haciz mevcut. Süreleri takip edin.",
                 oncelik=IslemDurumu.BILGI
             ))
-
+    
     def _olustur_rapor(self, sonuc: DosyaAnalizSonucu) -> str:
         """Özet rapor oluştur"""
         lines = [
@@ -446,10 +446,10 @@ class UYAPDosyaAnalyzer:
             "📈 EVRAK DAĞILIMI:",
             "-" * 50,
         ]
-
+        
         for kategori, adet in sorted(sonuc.evrak_dagilimi.items(), key=lambda x: -x[1]):
             lines.append(f"  • {kategori}: {adet}")
-
+        
         if sonuc.hacizler:
             lines.extend([
                 "",
@@ -461,7 +461,7 @@ class UYAPDosyaAnalyzer:
                 risk_icon = h.risk.value if h.risk else "❓"
                 kalan = f"{h.kalan_gun} gün" if h.kalan_gun and h.kalan_gun < 9999 else "Süresiz"
                 lines.append(f"  • {h.tur.value}: {kalan} - {risk_icon}")
-
+        
         if sonuc.aksiyonlar:
             lines.extend([
                 "",
@@ -472,7 +472,7 @@ class UYAPDosyaAnalyzer:
             for a in sonuc.aksiyonlar:
                 lines.append(f"  [{a.oncelik.value}] {a.baslik}")
                 lines.append(f"      → {a.aciklama}")
-
+        
         return "\n".join(lines)
 
 
@@ -480,9 +480,9 @@ class UYAPDosyaAnalyzer:
 if __name__ == "__main__":
     print("🧪 UYAPDosyaAnalyzer v12.5 Test")
     print("=" * 50)
-
+    
     analyzer = UYAPDosyaAnalyzer()
-
+    
     # Test: Evrak sınıflandırma
     test_cases = [
         ("odeme_emri_ornek7.pdf", EvrakKategorisi.ODEME_EMRI),
@@ -492,10 +492,10 @@ if __name__ == "__main__":
         ("kiymet_takdiri_raporu.pdf", EvrakKategorisi.KIYMET_TAKDIRI),
         ("vekaletname.pdf", EvrakKategorisi.VEKALETNAME),
     ]
-
+    
     for dosya_adi, beklenen in test_cases:
         sonuc = analyzer._siniflandir_evrak(dosya_adi, "")
         status = "✅" if sonuc == beklenen else "❌"
         print(f"{status} {dosya_adi} → {sonuc.value} (beklenen: {beklenen.value})")
-
+    
     print("\n✅ Testler tamamlandı")
