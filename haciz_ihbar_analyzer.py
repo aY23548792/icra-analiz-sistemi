@@ -58,7 +58,7 @@ class BatchAnalizSonucu:
     tuzel_kisi_sayisi: int = 0
     gercek_kisi_sayisi: int = 0
     cevaplar: List[HacizIhbarCevabi] = field(default_factory=list)
-    
+
     @property
     def ozet_rapor(self) -> str:
         lines = [
@@ -70,25 +70,25 @@ class BatchAnalizSonucu:
             f"Banka: {self.banka_sayisi} | Şirket: {self.tuzel_kisi_sayisi} | Kişi: {self.gercek_kisi_sayisi}",
             "-" * 50,
         ]
-        
+
         for c in self.cevaplar:
             status = "✅" if c.cevap_durumu == CevapDurumu.BLOKE_VAR else "❌"
             lines.append(f"{status} {c.muhatap_adi}: {c.cevap_durumu.value} - {c.bloke_tutari:,.2f} TL")
             lines.append(f"   → {c.sonraki_adim}")
-        
+
         return "\n".join(lines)
 
 
 class HacizIhbarAnalyzer:
     """
     Context-Aware Banka Cevabı Analizörü
-    
+
     Strateji:
     1. Önce NEGATİF kontrol (hesap yok, bakiye yok)
     2. Sonra POZİTİF kontrol (bloke var) - 40 karakter proximity ile
     3. Son olarak belirsiz durumlar
     """
-    
+
     # === BANKA VERİTABANI ===
     BANKALAR = {
         "ziraat": ("T.C. Ziraat Bankası", ["ziraat", "t.c. ziraat"]),
@@ -143,35 +143,35 @@ class HacizIhbarAnalyzer:
         r'yetersiz\s*bakiye',
         r'haczedilecek\s*(?:bakiye|tutar)\s*(?:bulunma|yok)',
     ]
-    
+
     # === CONTEXT-AWARE BLOKE PATTERNLERİ (KRİTİK!) ===
     # 40 karakter proximity limiti - "ghost bloke" engellemek için
     BLOKE_BEFORE_PATTERN = re.compile(
         r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*(?:TL|₺)?.{0,40}?(?:bloke|haciz)',
         re.IGNORECASE | re.DOTALL
     )
-    
+
     BLOKE_AFTER_PATTERN = re.compile(
         r'(?:bloke|haciz).{0,40}?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*(?:TL|₺)?',
         re.IGNORECASE | re.DOTALL
     )
-    
+
     # Direkt etiketli tutarlar
     LABELED_AMOUNT_PATTERN = re.compile(
         r'(?:bloke(?:li)?\s*(?:tutar|edilen)|haciz(?:li)?\s*tutar)\s*:?\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*(?:TL|₺)?',
         re.IGNORECASE
     )
-    
+
     def __init__(self):
         # Pre-compile patterns for performance
         self._hesap_yok_compiled = [re.compile(p, re.IGNORECASE) for p in self.HESAP_YOK_PATTERNS]
         self._bakiye_yok_compiled = [re.compile(p, re.IGNORECASE) for p in self.BAKIYE_YOK_PATTERNS]
-    
+
     # === ANA ANALİZ FONKSİYONU ===
     def batch_analiz(self, dosya_yollari: List[str]) -> BatchAnalizSonucu:
         """Birden fazla dosyayı analiz et"""
         cevaplar = []
-        
+
         for yol in dosya_yollari:
             try:
                 if os.path.isdir(yol):
@@ -188,13 +188,13 @@ class HacizIhbarAnalyzer:
                         cevaplar.append(result)
             except Exception as e:
                 print(f"Hata ({yol}): {e}", file=sys.stderr)
-        
+
         # İstatistikler
         toplam_bloke = sum(c.bloke_tutari for c in cevaplar if c.cevap_durumu == CevapDurumu.BLOKE_VAR)
         banka_sayisi = len([c for c in cevaplar if c.muhatap_turu == MuhatapTuru.BANKA])
         tuzel_sayisi = len([c for c in cevaplar if c.muhatap_turu == MuhatapTuru.TUZEL_KISI])
         gercek_sayisi = len([c for c in cevaplar if c.muhatap_turu == MuhatapTuru.GERCEK_KISI])
-        
+
         return BatchAnalizSonucu(
             toplam_muhatap=len(cevaplar),
             toplam_bloke=toplam_bloke,
@@ -203,15 +203,15 @@ class HacizIhbarAnalyzer:
             gercek_kisi_sayisi=gercek_sayisi,
             cevaplar=cevaplar
         )
-    
+
     def _analiz_tek_dosya(self, yol: str) -> Optional[HacizIhbarCevabi]:
         """Tek dosyayı analiz et"""
         metin = self._dosya_oku(yol)
         if not metin or len(metin.strip()) < 20:
             return None
-        
+
         return self._analiz_metin(metin, os.path.basename(yol))
-    
+
     def _analiz_metin(self, metin: str, kaynak: str = "") -> HacizIhbarCevabi:
         """
         Ana analiz mantığı - Context-Aware
@@ -238,7 +238,7 @@ class HacizIhbarAnalyzer:
                 aciklama="Kayıtlı elektronik posta bildirimi",
                 kaynak_dosya=kaynak
             )
-        
+
         # 2. HESAP YOK Kontrolü (Negatif - Öncelikli)
         if any(p.search(metin_lower) for p in self._hesap_yok_compiled):
             return HacizIhbarCevabi(
@@ -249,7 +249,7 @@ class HacizIhbarAnalyzer:
                 aciklama="Borçlunun bu kurumda hesabı yok",
                 kaynak_dosya=kaynak
             )
-        
+
         # 3. BAKİYE YOK Kontrolü
         if any(p.search(metin_lower) for p in self._bakiye_yok_compiled):
             return HacizIhbarCevabi(
@@ -260,10 +260,10 @@ class HacizIhbarAnalyzer:
                 aciklama="Hesap var ama bakiye yok veya yetersiz",
                 kaynak_dosya=kaynak
             )
-        
+
         # 4. BLOKE VAR Kontrolü (Context-Aware)
         bloke_tutar = self._tespit_bloke_tutar(metin)
-        
+
         if bloke_tutar > 0:
             return HacizIhbarCevabi(
                 muhatap_adi=muhatap_adi,
@@ -274,7 +274,7 @@ class HacizIhbarAnalyzer:
                 aciklama=f"{bloke_tutar:,.2f} TL bloke tespit edildi",
                 kaynak_dosya=kaynak
             )
-        
+
         # 5. Kelime var ama tutar yok
         if "bloke" in metin_lower or "haciz" in metin_lower:
             return HacizIhbarCevabi(
@@ -285,7 +285,7 @@ class HacizIhbarAnalyzer:
                 aciklama="Bloke/haciz kelimesi var ama tutar tespit edilemedi",
                 kaynak_dosya=kaynak
             )
-        
+
         # 6. Belirsiz
         return HacizIhbarCevabi(
             muhatap_adi=muhatap_adi,
@@ -295,15 +295,15 @@ class HacizIhbarAnalyzer:
             aciklama="Otomatik sınıflandırılamadı",
             kaynak_dosya=kaynak
         )
-    
+
     def _tespit_bloke_tutar(self, metin: str) -> float:
         """
         Context-Aware Bloke Tutar Tespiti
-        
+
         KRİTİK: "bloke" kelimesine EN YAKIN tutarı bul!
         "Dosya borcu 100.000 TL ... bloke edilen 45.678 TL" durumunda
         sadece 45.678'i yakalamalı, 100.000'i DEĞİL.
-        
+
         Strateji: bloke kelimesini bul, etrafındaki ±50 karakterde tutar ara
         """
         # 1. Önce etiketli tutarları ara (en güvenilir)
@@ -312,11 +312,11 @@ class HacizIhbarAnalyzer:
             parsed = self._tutar_parse(t)
             if parsed > 0:
                 return parsed  # Etiketli bulunca direkt döndür
-        
+
         # 2. "bloke" kelimesinin konumlarını bul
         metin_lower = metin.lower()
         bloke_pozisyonlari = []
-        
+
         for keyword in ['bloke', 'haciz']:
             start = 0
             while True:
@@ -325,40 +325,40 @@ class HacizIhbarAnalyzer:
                     break
                 bloke_pozisyonlari.append(pos)
                 start = pos + 1
-        
+
         if not bloke_pozisyonlari:
             return 0.0
-        
+
         # 3. Her bloke konumu için en yakın tutarı bul
         # Tutar pattern: 1.234,56 veya 12345,67 veya 1234.56
         tutar_pattern = re.compile(r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*(?:TL|₺)?')
-        
+
         best_tutar = 0.0
         min_distance = float('inf')
-        
+
         for bloke_pos in bloke_pozisyonlari:
             # bloke'nin ±60 karakter etrafına bak
             start = max(0, bloke_pos - 60)
             end = min(len(metin), bloke_pos + 60)
             window = metin[start:end]
-            
+
             for match in tutar_pattern.finditer(window):
                 tutar_str = match.group(1)
                 tutar_val = self._tutar_parse(tutar_str)
-                
+
                 if tutar_val > 0:
                     # Tutarın bloke'ye uzaklığını hesapla
                     tutar_pos_in_window = match.start()
                     tutar_pos_global = start + tutar_pos_in_window
                     distance = abs(tutar_pos_global - bloke_pos)
-                    
+
                     # En yakın tutarı seç
                     if distance < min_distance:
                         min_distance = distance
                         best_tutar = tutar_val
-        
+
         return best_tutar
-    
+
     def _tespit_muhatap(self, metin_lower: str) -> Tuple[str, MuhatapTuru]:
         """Muhatap adı ve türünü tespit et"""
         # Banka kontrolü
@@ -366,14 +366,14 @@ class HacizIhbarAnalyzer:
             for pattern in patterns:
                 if pattern in metin_lower:
                     return name, MuhatapTuru.BANKA
-        
+
         # Şirket belirteçleri
         sirket_belirtecleri = ["a.ş.", "ltd", "şti", "anonim", "limited", "holding"]
         if any(b in metin_lower for b in sirket_belirtecleri):
             return "Tüzel Kişi", MuhatapTuru.TUZEL_KISI
-        
+
         return "Bilinmeyen Muhatap", MuhatapTuru.DIGER
-    
+
     def _turkish_lower(self, text: str) -> str:
         """Türkçe karakterlere uygun lowercase"""
         if not text:
@@ -385,19 +385,19 @@ class HacizIhbarAnalyzer:
             ord('Ç'): 'ç'
         }
         return text.translate(tr_map).lower()
-    
+
     def _tutar_parse(self, text: str) -> float:
         """Türk Lirası tutarını parse et"""
         if not text:
             return 0.0
-        
+
         clean = re.sub(r'[^\d.,]', '', str(text))
         if not clean:
             return 0.0
-        
+
         dot_count = clean.count('.')
         comma_count = clean.count(',')
-        
+
         if dot_count > 0 and comma_count > 0:
             if clean.rfind(',') > clean.rfind('.'):
                 # TR: 1.234,56
@@ -413,17 +413,17 @@ class HacizIhbarAnalyzer:
                 clean = clean.replace(',', '')
             else:
                 clean = clean.replace(',', '.')
-        
+
         try:
             return float(clean)
         except ValueError:
             return 0.0
-    
+
     def _dosya_oku(self, yol: str) -> str:
         """Çeşitli dosya formatlarını oku"""
         try:
             ext = os.path.splitext(yol)[1].lower()
-            
+
             # UDF (UYAP Document Format)
             if ext == '.udf':
                 try:
@@ -438,7 +438,7 @@ class HacizIhbarAnalyzer:
                             return re.sub(r'<[^>]+>', ' ', raw)
                 except:
                     pass
-            
+
             # PDF
             if ext == '.pdf' and PDFPLUMBER_OK:
                 try:
@@ -451,7 +451,7 @@ class HacizIhbarAnalyzer:
                         return '\n'.join(texts)
                 except:
                     pass
-            
+
             # ZIP (içindeki dosyaları oku)
             if ext == '.zip':
                 try:
@@ -467,15 +467,15 @@ class HacizIhbarAnalyzer:
                         return '\n'.join(texts)
                 except:
                     pass
-            
+
             # Text/XML
             if ext in ['.txt', '.xml', '.html']:
                 with open(yol, 'r', encoding='utf-8', errors='replace') as f:
                     content = f.read()
                     return re.sub(r'<[^>]+>', ' ', content)
-            
+
             return ""
-            
+
         except Exception as e:
             print(f"Dosya okuma hatası ({yol}): {e}", file=sys.stderr)
             return ""
@@ -485,9 +485,9 @@ class HacizIhbarAnalyzer:
 if __name__ == "__main__":
     print("🧪 HacizIhbarAnalyzer v12.5 Test")
     print("=" * 50)
-    
+
     analyzer = HacizIhbarAnalyzer()
-    
+
     # Test 1: Context-aware bloke (KRİTİK TEST)
     test1 = """
     Dosya borcu: 100.000,00 TL
@@ -497,24 +497,24 @@ if __name__ == "__main__":
     expected1 = 45678.90
     status1 = "✅" if abs(result1.bloke_tutari - expected1) < 0.01 else "❌"
     print(f"{status1} Context-aware: {result1.bloke_tutari:,.2f} (beklenen: {expected1:,.2f})")
-    
+
     # Test 2: Hesap yok
     test2 = "Borçlu adına bankamız nezdinde kayıtlı hesap bulunmamaktadır."
     result2 = analyzer._analiz_metin(test2)
     status2 = "✅" if result2.cevap_durumu == CevapDurumu.HESAP_YOK else "❌"
     print(f"{status2} Hesap yok: {result2.cevap_durumu.value}")
-    
+
     # Test 3: Bloke after pattern
     test3 = "Bloke edilen tutar: 12.345,67 TL"
     result3 = analyzer._analiz_metin(test3)
     expected3 = 12345.67
     status3 = "✅" if abs(result3.bloke_tutari - expected3) < 0.01 else "❌"
     print(f"{status3} Labeled amount: {result3.bloke_tutari:,.2f} (beklenen: {expected3:,.2f})")
-    
+
     # Test 4: Banka tespiti
     test4 = "T.C. Ziraat Bankası A.Ş. tarafından 5.000 TL bloke konulmuştur."
     result4 = analyzer._analiz_metin(test4)
     status4 = "✅" if "Ziraat" in result4.muhatap_adi else "❌"
     print(f"{status4} Banka tespiti: {result4.muhatap_adi}")
-    
+
     print("\n✅ Testler tamamlandı")
