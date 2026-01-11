@@ -345,23 +345,27 @@ class UYAPDosyaAnalyzer:
         return HacizTuru.DIGER
 
     def _hesapla_haciz_suresi(self, haciz_tarihi: Optional[datetime], haciz_turu: HacizTuru) -> tuple:
-        """İİK 106/110 süre hesapla"""
+        """
+        İİK 106/110 süre hesapla
+
+        ÖNEMLI: 7343 sayılı kanunla (30.11.2021) taşınır/taşınmaz ayrımı KALDIRILDI!
+        Artık HEPSİ İÇİN 1 YIL süre var.
+
+        Kontrol edilecekler:
+        1. Hacizden itibaren 1 yıl içinde satış istendi mi?
+        2. Satış talebiyle birlikte avans yatırıldı mı?
+        """
         if not haciz_tarihi:
             return None, RiskSeviyesi.BILINMIYOR
 
-        # Banka ve maaş hacizlerinde süre yok
+        # Banka ve maaş hacizlerinde süre yok (İİK 106/110 kapsamı dışında)
         if haciz_turu in [HacizTuru.BANKA_89_1, HacizTuru.MAAS]:
             return 9999, RiskSeviyesi.GUVENLI
 
         bugun = datetime.now()
 
-        # 7343 sayılı kanun (30.11.2021)
-        kanun_tarihi = datetime(2021, 11, 30)
-
-        if haciz_turu == HacizTuru.TASINMAZ:
-            gun = 365 if haciz_tarihi >= kanun_tarihi else 730
-        else:  # Taşınır (araç, menkul)
-            gun = 180 if haciz_tarihi >= kanun_tarihi else 365
+        # 7343 sonrası: HEPSİ 1 YIL (365 gün) - Taşınır/taşınmaz ayrımı YOK!
+        gun = 365
 
         from datetime import timedelta
         son_gun = haciz_tarihi + timedelta(days=gun)
