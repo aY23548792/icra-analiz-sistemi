@@ -25,13 +25,6 @@ class IcraUtils:
         ord('Ş'): 'ş', ord('Ö'): 'ö',
         ord('Ç'): 'ç'
     }
-    
-    TR_UPPER_MAP = {
-        ord('i'): 'İ', ord('ı'): 'I',
-        ord('ğ'): 'Ğ', ord('ü'): 'Ü',
-        ord('ş'): 'Ş', ord('ö'): 'Ö',
-        ord('ç'): 'Ç'
-    }
 
     TR_UPPER_MAP = {
         ord('i'): 'İ', ord('ı'): 'I',
@@ -46,13 +39,6 @@ class IcraUtils:
         if not text:
             return ""
         return text.translate(IcraUtils.TR_LOWER_MAP).lower()
-    
-    @staticmethod
-    def tr_upper(text: str) -> str:
-        """Türkçe karakter normalizasyonu ile büyük harf"""
-        if not text:
-            return ""
-        return text.translate(IcraUtils.TR_UPPER_MAP).upper()
 
     @staticmethod
     def tr_upper(text: str) -> str:
@@ -82,7 +68,7 @@ class IcraUtils:
         
         dot_count = clean.count('.')
         comma_count = clean.count(',')
-        
+
         # Her iki ayraç da var
         if dot_count > 0 and comma_count > 0:
             last_dot = clean.rfind('.')
@@ -93,7 +79,7 @@ class IcraUtils:
             else:
                 # US format: 1,234.56
                 clean = clean.replace(',', '')
-        
+
         # Sadece nokta var
         elif dot_count > 0:
             if dot_count > 1:

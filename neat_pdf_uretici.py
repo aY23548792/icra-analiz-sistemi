@@ -89,12 +89,13 @@ class NeatPDFUretici:
                 try:
                     pdfmetrics.registerFont(TTFont('TurkceFont', path))
                     self.font_name = 'TurkceFont'
-                    print(f"✅ Türkçe font yüklendi: {path}")
+                    # print(f"✅ Türkçe font yüklendi: {path}")
                     return
                 except Exception as e:
-                    print(f"⚠️ Font yüklenemedi ({path}): {e}")
+                    pass
+                    # print(f"⚠️ Font yüklenemedi ({path}): {e}")
 
-        print("⚠️ Türkçe font bulunamadı, Helvetica kullanılacak")
+        # print("⚠️ Türkçe font bulunamadı, Helvetica kullanılacak")
 
     def uret(self, kaynak_yol: str, cikti_yol: str, baslik: str = "İcra Dosyası") -> Optional[PDFRapor]:
         """
