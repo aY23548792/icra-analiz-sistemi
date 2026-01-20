@@ -17,7 +17,7 @@ KANUN_7343_YURURLUK = datetime(2021, 11, 30)
 
 class IcraUtils:
     """Merkezi yardımcı fonksiyonlar"""
-    
+
     # Türkçe karakter dönüşüm haritası
     TR_LOWER_MAP = {
         ord('İ'): 'i', ord('I'): 'ı',
@@ -25,7 +25,7 @@ class IcraUtils:
         ord('Ş'): 'ş', ord('Ö'): 'ö',
         ord('Ç'): 'ç'
     }
-    
+
     TR_UPPER_MAP = {
         ord('i'): 'İ', ord('ı'): 'I',
         ord('ğ'): 'Ğ', ord('ü'): 'Ü',
@@ -39,7 +39,7 @@ class IcraUtils:
         if not text:
             return ""
         return text.translate(IcraUtils.TR_LOWER_MAP).lower()
-    
+
     @staticmethod
     def tr_upper(text: str) -> str:
         """Türkçe karakter normalizasyonu ile büyük harf"""
@@ -51,7 +51,7 @@ class IcraUtils:
     def tutar_parse(text: str) -> float:
         """
         Gelişmiş Tutar Ayrıştırıcı
-        
+
         Desteklenen formatlar:
         - '1.234,56' -> 1234.56 (TR format)
         - '1,234.56' -> 1234.56 (US format)
@@ -60,7 +60,7 @@ class IcraUtils:
         """
         if not text:
             return 0.0
-        
+
         # Sadece rakam ve ayraçları al
         clean = re.sub(r'[^\d.,]', '', str(text))
         if not clean:
@@ -68,7 +68,7 @@ class IcraUtils:
         
         dot_count = clean.count('.')
         comma_count = clean.count(',')
-        
+
         # Her iki ayraç da var
         if dot_count > 0 and comma_count > 0:
             last_dot = clean.rfind('.')
@@ -79,7 +79,7 @@ class IcraUtils:
             else:
                 # US format: 1,234.56
                 clean = clean.replace(',', '')
-        
+
         # Sadece nokta var
         elif dot_count > 0:
             if dot_count > 1:
@@ -89,7 +89,7 @@ class IcraUtils:
                 # Son 3 rakam = binlik (12.500)
                 clean = clean.replace('.', '')
             # Aksi halde ondalık nokta
-        
+
         # Sadece virgül var
         elif comma_count > 0:
             if comma_count > 1:
@@ -112,7 +112,7 @@ class IcraUtils:
         """DD.MM.YYYY veya DD/MM/YYYY formatını parse et"""
         if not text:
             return None
-        
+
         match = re.search(r'(\d{2})[./](\d{2})[./](\d{4})', text)
         if match:
             try:
@@ -140,7 +140,7 @@ class IcraUtils:
 if __name__ == "__main__":
     print("🧪 IcraUtils v12.5 Test")
     print("=" * 50)
-    
+
     # Tutar testleri
     tutar_tests = [
         ("1.234,56", 1234.56),
@@ -151,13 +151,13 @@ if __name__ == "__main__":
         ("45678", 45678.0),
         ("100,00", 100.0),
     ]
-    
+
     print("\n📊 Tutar Parse Testleri:")
     for inp, expected in tutar_tests:
         result = IcraUtils.tutar_parse(inp)
         status = "✅" if abs(result - expected) < 0.01 else "❌"
         print(f"  {status} '{inp}' → {result:,.2f} (beklenen: {expected:,.2f})")
-    
+
     # Türkçe lowercase testleri
     print("\n🔤 Türkçe Lowercase Testleri:")
     tr_tests = [
@@ -169,5 +169,5 @@ if __name__ == "__main__":
         result = IcraUtils.clean_text(inp)
         status = "✅" if result == expected else "❌"
         print(f"  {status} '{inp}' → '{result}' (beklenen: '{expected}')")
-    
+
     print("\n✅ Testler tamamlandı")
