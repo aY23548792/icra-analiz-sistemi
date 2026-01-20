@@ -58,6 +58,26 @@ class BatchAnalizSonucu:
     tuzel_kisi_sayisi: int = 0
     gercek_kisi_sayisi: int = 0
     cevaplar: List[HacizIhbarCevabi] = field(default_factory=list)
+    
+    @property
+    def ozet_rapor(self) -> str:
+        lines = [
+            "=" * 50,
+            "HACİZ İHBAR ANALİZ RAPORU",
+            "=" * 50,
+            f"Toplam Muhatap: {self.toplam_muhatap}",
+            f"Toplam Bloke: {self.toplam_bloke:,.2f} TL",
+            f"Banka: {self.banka_sayisi} | Şirket: {self.tuzel_kisi_sayisi} | Kişi: {self.gercek_kisi_sayisi}",
+            "-" * 50,
+        ]
+        
+        for c in self.cevaplar:
+            status = "✅" if c.cevap_durumu == CevapDurumu.BLOKE_VAR else "❌"
+            lines.append(f"{status} {c.muhatap_adi}: {c.cevap_durumu.value} - {c.bloke_tutari:,.2f} TL")
+            lines.append(f"   → {c.sonraki_adim}")
+        
+        return "\n".join(lines)
+
 
     @property
     def ozet_rapor(self) -> str:
